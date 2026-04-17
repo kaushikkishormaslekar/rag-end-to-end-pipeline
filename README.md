@@ -116,3 +116,5 @@ MIT
 - Sentence Transformers library
 - Hugging Face Transformers
 - PyTorch team
+
+Hugging Face token removed from the repository. Use an environment variable or notebook prompt at runtime instead.

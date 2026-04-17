@@ -40,3 +40,6 @@ $venvPath = ".\venv_py312\Scripts\python.exe"
 
 Write-Host "`n✅ All packages installed successfully!" -ForegroundColor Green
 Write-Host "🚀 You can now use the 'Python 3.12 (RAG GPU)' kernel in your notebook" -ForegroundColor Cyan
+
+
+#FET3BlbkFJdBV_7qSAOL3Ao6BbR5ORtprcRZVgJecsWrCA5eY_KTMg_DuGqMK8Wn7bs1QB09CMlgmzNOM10A
