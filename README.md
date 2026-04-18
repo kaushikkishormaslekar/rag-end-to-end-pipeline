@@ -59,6 +59,9 @@ flowchart LR
 Core files in this repo:
 
 - `pipeline.ipynb`: end-to-end RAG pipeline notebook
+- `advanced_rag.py`: hybrid retrieval + reranking + citations + abstain/fallback + governance
+- `evaluate_rag.py`: golden set evaluation and retrieval/answer dashboards
+- `golden_test_set.json`: starter golden benchmark questions
 - `requirements.txt`: dependency list
 - `install_requirements.ps1`: setup helper script
 - `text_chunks_and_embeddings_df.csv`: generated embeddings/chunks output
@@ -157,6 +160,69 @@ rag-pipeline/
 - Replace CSV persistence with FAISS or a vector DB
 - Add a simple API (FastAPI) or chat UI (Gradio)
 - Add evaluation notebook for retrieval quality and answer faithfulness
+
+---
+
+## Phase 1 Optimization Features Implemented
+
+The repo now includes a reusable advanced RAG engine with:
+
+- Hybrid retrieval (dense + BM25 + reciprocal rank fusion)
+- Token-aware chunking with overlap
+- Cross-encoder reranking
+- Citation-grounded context formatting
+- Abstain/fallback behavior when evidence is weak
+- Query rewriting + adaptive top-k
+- Metadata filtering
+- Caching for retrieval/answer reuse
+- Governance controls (source allow/deny + PII masking)
+
+### Quick Usage: Advanced Retrieval + Grounded Answer
+
+```python
+from transformers import pipeline
+from advanced_rag import RAGConfig, build_engine_from_embeddings_csv
+
+config = RAGConfig(
+	default_top_k=5,
+	abstain_threshold=0.35,
+	source_allowlist=["book"],
+)
+
+engine = build_engine_from_embeddings_csv("text_chunks_and_embeddings_df.csv", config=config)
+
+generator = pipeline("text2text-generation", model="google/flan-t5-small")
+
+def llm_call(prompt: str) -> str:
+	out = generator(prompt, max_new_tokens=220, do_sample=False)
+	return out[0]["generated_text"]
+
+response = engine.answer(
+	query="How does RAG reduce hallucination?",
+	llm_callable=llm_call,
+	filters={"min_page": 1},
+)
+
+print(response["answer"])
+print(response["citations"])
+```
+
+### Quick Usage: Golden Set + Dashboards
+
+```python
+from evaluate_rag import load_golden_set, evaluate_retrieval, evaluate_answers, build_dashboard
+
+cases = load_golden_set("golden_test_set.json")
+
+retrieval_df, retrieval_summary = evaluate_retrieval(engine, cases, k=5)
+answer_df, answer_summary = evaluate_answers(engine, cases, llm_callable=llm_call, k=5)
+
+artifacts = build_dashboard(retrieval_df, answer_df, output_dir="reports")
+
+print(retrieval_summary)
+print(answer_summary)
+print(artifacts)
+```
 
 ---
 
