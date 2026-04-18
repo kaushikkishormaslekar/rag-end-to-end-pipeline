@@ -210,19 +210,31 @@ print(response["citations"])
 ### Quick Usage: Golden Set + Dashboards
 
 ```python
-from evaluate_rag import load_golden_set, evaluate_retrieval, evaluate_answers, build_dashboard
+from evaluate_rag import load_golden_set, run_eval_suite
 
 cases = load_golden_set("golden_test_set.json")
 
-retrieval_df, retrieval_summary = evaluate_retrieval(engine, cases, k=5)
-answer_df, answer_summary = evaluate_answers(engine, cases, llm_callable=llm_call, k=5)
+results = run_eval_suite(engine, cases, llm_callable=llm_call, k=5, output_dir="reports")
 
-artifacts = build_dashboard(retrieval_df, answer_df, output_dir="reports")
-
-print(retrieval_summary)
-print(answer_summary)
-print(artifacts)
+print(results["retrieval_summary"])
+print(results["answer_summary"])
+print(results["artifacts"])
+print(results["summary_report"])
 ```
+
+### CLI Evaluation Runner
+
+```powershell
+python evaluate_rag.py --index text_chunks_and_embeddings_df.csv --golden golden_test_set.json --output reports
+```
+
+This writes:
+
+- `reports/retrieval_eval.csv`
+- `reports/answer_eval.csv`
+- `reports/retrieval_metrics.png`
+- `reports/answer_metrics.png`
+- `reports/evaluation_summary.md`
 
 ---
 
