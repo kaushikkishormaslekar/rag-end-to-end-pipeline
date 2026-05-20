@@ -1,0 +1,32 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: rag-spring-gateway
+  main:
+    web-application-type: servlet
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+rag:
+  service:
+    base-url: ${RAG_SERVICE_BASE_URL:http://127.0.0.1:8000}
+    request-timeout: ${RAG_SERVICE_TIMEOUT:60s}
+
+gateway:
+  security:
+    issuer: ${JWT_ISSUER:rag-spring-gateway}
+    jwt-secret: ${JWT_SECRET:dev-only-change-me-32-byte-secret-key}
+    token-ttl: ${JWT_TOKEN_TTL:1h}
+    demo-username: ${JWT_DEMO_USERNAME:demo}
+    demo-password: ${JWT_DEMO_PASSWORD:demo123}
+  rate-limit:
+    enabled: ${RATE_LIMIT_ENABLED:true}
+    capacity: ${RATE_LIMIT_CAPACITY:30}
+    refill-tokens: ${RATE_LIMIT_REFILL_TOKENS:30}
+    refill-period: ${RATE_LIMIT_REFILL_PERIOD:1m}

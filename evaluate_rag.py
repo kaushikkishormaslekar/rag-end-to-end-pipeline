@@ -4,13 +4,13 @@ import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from advanced_rag import AdvancedRAGEngine
+if TYPE_CHECKING:
+    from advanced_rag import AdvancedRAGEngine
 
 
 @dataclass(frozen=True)
@@ -89,7 +89,7 @@ def evaluate_retrieval(
         results = retrieved.get("results", [])
 
         hit_positions: list[int] = []
-        keyword_hits = 0
+        keyword_hit_positions: list[int] = []
 
         for rank, item in enumerate(results, start=1):
             chunk_text = str(item.get("text", ""))
@@ -98,7 +98,8 @@ def evaluate_retrieval(
             if expected_chunk_ids and chunk_id in expected_chunk_ids:
                 hit_positions.append(rank)
             if expected_keywords:
-                keyword_hits += int(_keyword_hit_count(chunk_text, expected_keywords) > 0)
+                if _keyword_hit_count(chunk_text, expected_keywords) > 0:
+                    keyword_hit_positions.append(rank)
 
         recall_at_k = 0.0
         mrr = 0.0
@@ -107,8 +108,8 @@ def evaluate_retrieval(
             recall_at_k = 1.0 if hit_positions else 0.0
             mrr = 1.0 / min(hit_positions) if hit_positions else 0.0
         elif expected_keywords:
-            recall_at_k = 1.0 if keyword_hits > 0 else 0.0
-            mrr = 1.0 / 1.0 if keyword_hits > 0 else 0.0
+            recall_at_k = 1.0 if keyword_hit_positions else 0.0
+            mrr = 1.0 / min(keyword_hit_positions) if keyword_hit_positions else 0.0
 
         rows.append(
             {
@@ -191,6 +192,8 @@ def build_dashboard(
     answer_df: pd.DataFrame,
     output_dir: str | Path = "reports",
 ) -> dict[str, str]:
+    import matplotlib.pyplot as plt
+
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
 
@@ -297,6 +300,8 @@ def _build_default_llm_callable(model_name: str = "google/flan-t5-small"):
 
 
 def main() -> int:
+    from advanced_rag import AdvancedRAGEngine
+
     parser = argparse.ArgumentParser(description="Run golden-set evaluation for the RAG pipeline.")
     parser.add_argument("--index", required=True, help="Path to text_chunks_and_embeddings_df.csv")
     parser.add_argument("--golden", required=True, help="Path to golden_test_set.json")

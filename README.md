@@ -1,30 +1,31 @@
-# RAG Pipeline: Local, Fast, GPU-Ready
+# Full-Stack RAG Chat Application
 
 <p align="center">
-	<strong>Retrieval-Augmented Generation for PDF Q&A on your own machine.</strong><br/>
-	Build embeddings on GPU, retrieve context in milliseconds, and answer questions with a local model.
+	<strong>Document upload, ChromaDB retrieval, Spring Boot gateway, JWT auth, SSE streaming, and a Next.js chat UI.</strong><br/>
+	A local full-stack Retrieval-Augmented Generation project built from a cleaned Python RAG core.
 </p>
 
 <p align="center">
 	<img alt="Python" src="https://img.shields.io/badge/Python-3.12-blue?style=for-the-badge&logo=python"/>
-	<img alt="CUDA" src="https://img.shields.io/badge/CUDA-Enabled-76B900?style=for-the-badge&logo=nvidia"/>
-	<img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-GPU-red?style=for-the-badge&logo=pytorch"/>
-	<img alt="Notebook" src="https://img.shields.io/badge/Jupyter-Notebook-F37626?style=for-the-badge&logo=jupyter"/>
+	<img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-RAG-009688?style=for-the-badge&logo=fastapi"/>
+	<img alt="Spring Boot" src="https://img.shields.io/badge/Spring_Boot-Gateway-6DB33F?style=for-the-badge&logo=springboot"/>
+	<img alt="Next.js" src="https://img.shields.io/badge/Next.js-Chat_UI-000000?style=for-the-badge&logo=nextdotjs"/>
 </p>
 
 ---
 
 ## Why This Repo Exists
 
-Most RAG tutorials are either too abstract or rely heavily on cloud services.
-This project is practical: you give it a PDF, it builds an embedding index locally, and answers questions using retrieved context.
+Most RAG tutorials stop at a notebook.
+This project turns the RAG pipeline into a runnable application: upload documents, index them into ChromaDB, ask questions through a secured Spring Boot gateway, and stream answers into a Next.js chat UI.
 
 ### What makes it interesting
 
-- Runs fully local (documents stay on your machine)
-- Uses GPU acceleration for faster embedding generation
-- Keeps architecture simple enough to inspect end-to-end in one notebook
-- Easy to extend into API or UI later
+- FastAPI RAG service for chunking, embedding, retrieval, and answer construction
+- ChromaDB vector storage instead of CSV-as-runtime-storage
+- Spring Boot API gateway with JWT auth, rate limiting, and SSE proxying
+- Next.js black chat interface with document upload/list/delete management
+- Tests for core Python RAG behavior plus Spring gateway security/chat paths
 
 ---
 
@@ -35,7 +36,7 @@ flowchart LR
 		A[PDF Document] --> B[Text Extraction]
 		B --> C[Chunking]
 		C --> D[Embedding Model\nall-mpnet-base-v2]
-		D --> E[Vector Store\nCSV + Tensor embeddings]
+		D --> E[Vector Store\nChromaDB runtime]
 
 		Q[User Query] --> Q1[Query Embedding]
 		Q1 --> S[Similarity Search\nTop-k Context]
@@ -48,23 +49,28 @@ flowchart LR
 
 ## Tech Stack
 
-- Python 3.12
+- Python 3.12 recommended
 - PyTorch + CUDA
 - sentence-transformers
-- transformers + accelerate + bitsandbytes
+- transformers + accelerate
+- bitsandbytes optional for quantization experiments
 - PyMuPDF
 - pandas / numpy / nltk
-- Jupyter Notebook workflow
+- ChromaDB
+- FastAPI
+- Spring Boot
+- Next.js / React / Tailwind
 
 Core files in this repo:
 
-- `pipeline.ipynb`: end-to-end RAG pipeline notebook
-- `advanced_rag.py`: hybrid retrieval + reranking + citations + abstain/fallback + governance
+- `advanced_rag.py`: core RAG engine used by the FastAPI service
 - `evaluate_rag.py`: golden set evaluation and retrieval/answer dashboards
+- `rag_service/`: FastAPI service wrapper for internal backend calls
+- `backend-spring/`: Spring Boot API gateway for frontend-facing chat calls
+- `frontend-next/`: Next.js chat UI for the public user experience
 - `golden_test_set.json`: starter golden benchmark questions
 - `requirements.txt`: dependency list
 - `install_requirements.ps1`: setup helper script
-- `text_chunks_and_embeddings_df.csv`: generated embeddings/chunks output
 
 ---
 
@@ -77,66 +83,58 @@ git clone <your-repo-url>
 cd retrieve-augmented-generation/rag-pipeline
 ```
 
-### 2) Create and activate virtual environment
+### 2) Create the environment and install dependencies
 
 ```powershell
-python -m venv venv_py312
+.\install_requirements.ps1
+```
+
+By default the helper creates `venv_py312` and installs CUDA 12.1 PyTorch wheels.
+It prefers Python 3.12 through the Windows `py` launcher, then falls back to the default `python` on your PATH.
+If PyTorch is already installed, run `.\install_requirements.ps1 -SkipTorch`.
+If you want optional quantization tooling, run `.\install_requirements.ps1 -InstallBitsAndBytes`.
+
+### 3) Activate the environment
+
+```powershell
 venv_py312\Scripts\Activate.ps1
 ```
 
-### 3) Install GPU-enabled PyTorch (CUDA 12.1 example)
+### 4) Run the application
+
+Terminal 1, Python RAG service:
 
 ```powershell
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+python -m uvicorn rag_service.main:app --host 127.0.0.1 --port 8000
 ```
 
-### 4) Install project dependencies
+Terminal 2, Spring Boot gateway:
 
 ```powershell
-pip install -r requirements.txt
+cd backend-spring
+mvn spring-boot:run
 ```
 
-### 5) Launch notebook
+Terminal 3, Next.js frontend:
 
 ```powershell
-jupyter notebook pipeline.ipynb
+cd frontend-next
+npm install
+npm run dev
 ```
+
+Open `http://127.0.0.1:3000`, sign in with `demo` / `demo123`, upload a PDF/TXT/Markdown document, and ask questions.
 
 ---
 
 ## Run Flow
 
-1. Put your PDF in the repo folder.
-2. Open `pipeline.ipynb`.
-3. Set the PDF path variable.
-4. Run cells in order.
-5. Ask questions and inspect retrieved context.
-
-Pipeline steps:
-
-1. Extract text from PDF
-2. Split text into chunks
-3. Generate chunk embeddings on GPU
-4. Compute query embedding
-5. Retrieve top-k relevant chunks
-6. Generate an answer using retrieved context
-
----
-
-## Performance Snapshot
-
-Observed on a 1,313-page PDF with RTX 3050 (4 GB VRAM):
-
-- Text extraction: ~30s
-- Chunk creation: 6,429 chunks
-- Embedding generation: ~1m 15s (GPU)
-- Retrieval latency: ~0.0001s per query
-
-Approximate memory footprint:
-
-- Embeddings: ~50 MB
-- LLM weights: ~163 MB
-- Total GPU memory used: typically under 1 GB
+1. Upload a PDF, TXT, or Markdown file from the Next.js sidebar.
+2. FastAPI extracts text, chunks it, embeds it, and stores vectors in ChromaDB.
+3. The chat UI sends questions to Spring Boot with a JWT bearer token.
+4. Spring applies auth/rate limiting and forwards the query to FastAPI.
+5. FastAPI retrieves grounded context and returns citations.
+6. Spring streams the answer back to Next.js over SSE.
 
 ---
 
@@ -145,10 +143,17 @@ Approximate memory footprint:
 ```text
 rag-pipeline/
 |- install_requirements.ps1
-|- pipeline.ipynb
+|- advanced_rag.py
+|- evaluate_rag.py
+|- golden_test_set.json
 |- requirements.txt
-|- text_chunks_and_embeddings_df.csv
-|- Hands-On-LLM.pdf
+|- architecture.md
+|- rag_service/                       # FastAPI internal RAG service
+|- backend-spring/                    # Spring Boot API gateway
+|- frontend-next/                     # Next.js chat UI
+|- tests/                             # Python unit/API tests
+|- chroma_db/                         # generated local ChromaDB store, gitignored
+|- documents/                         # uploaded local documents, gitignored
 ```
 
 ---
@@ -157,9 +162,9 @@ rag-pipeline/
 
 - Swap embedding model for speed vs quality experiments
 - Add reranking step after initial retrieval
-- Replace CSV persistence with FAISS or a vector DB
-- Add a simple API (FastAPI) or chat UI (Gradio)
-- Add evaluation notebook for retrieval quality and answer faithfulness
+- Add chat history persistence
+- Add multi-user document ownership
+- Add CI for Python, Spring, and Next.js checks
 
 ---
 
@@ -177,7 +182,10 @@ The repo now includes a reusable advanced RAG engine with:
 - Caching for retrieval/answer reuse
 - Governance controls (source allow/deny + PII masking)
 
-### Quick Usage: Advanced Retrieval + Grounded Answer
+### Optional Usage: CSV Bootstrap + Grounded Answer
+
+The full-stack app no longer needs the old notebook.
+If you separately generate a `text_chunks_and_embeddings_df.csv`, the Python engine can still import it for experiments or ChromaDB bootstrap.
 
 ```python
 from transformers import pipeline
@@ -235,6 +243,244 @@ This writes:
 - `reports/retrieval_metrics.png`
 - `reports/answer_metrics.png`
 - `reports/evaluation_summary.md`
+
+---
+
+## FastAPI RAG Service
+
+The application calls a FastAPI wrapper around the RAG engine.
+The service uses ChromaDB as the runtime vector store by default and treats the embeddings CSV as a bootstrap/import file.
+
+```powershell
+uvicorn rag_service.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Open:
+
+- `http://127.0.0.1:8000/health`
+- `http://127.0.0.1:8000/docs`
+
+Useful endpoints:
+
+- `GET /health`: service and Chroma index status
+- `POST /index/load`: import/load the embeddings CSV into ChromaDB
+- `GET /documents`: list uploaded/indexed documents
+- `POST /documents/upload`: upload and index PDF, TXT, or Markdown
+- `DELETE /documents/{document_id}`: delete an uploaded document and its vectors
+- `POST /retrieve`: retrieve relevant chunks from ChromaDB
+- `POST /query`: retrieve context and return a grounded answer
+- `POST /query/stream`: SSE token stream for chat-style clients
+
+To force a clean Chroma rebuild from the CSV:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/index/load `
+  -ContentType "application/json" `
+  -Body '{"reset_vector_store":true}'
+```
+
+Upload a document directly to the internal service:
+
+```powershell
+$form = @{
+  file = Get-Item .\notes.md
+  source = "notes"
+}
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/documents/upload `
+  -Form $form
+```
+
+Example request:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/query `
+  -ContentType "application/json" `
+  -Body '{"query":"How does RAG reduce hallucination?","top_k":5}'
+```
+
+By default the service uses an extractive fallback answer so it can run without an LLM provider.
+It also defaults `RAG_MODEL_LOCAL_FILES_ONLY=true`, which avoids surprise model downloads during API requests.
+Set it to `false` if you want the service to download Hugging Face models on demand.
+Set `RAG_VECTOR_BACKEND=memory` only if you want the older CSV/tensor in-memory backend for debugging.
+For Ollama generation, start Ollama locally and set:
+
+```powershell
+$env:RAG_MODEL_LOCAL_FILES_ONLY="false"
+$env:RAG_LLM_PROVIDER="ollama"
+$env:OLLAMA_MODEL="llama3.2"
+uvicorn rag_service.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Spring Boot should call this service internally at `POST /query`; the public frontend should call Spring Boot, not this Python service directly.
+
+---
+
+## Spring Boot API Gateway
+
+The Spring Boot gateway is the public backend layer from the architecture diagram.
+It accepts frontend chat requests, validates JWT bearer tokens, rate-limits chat calls, calls the internal Python RAG service with a typed HTTP client, and returns a frontend-friendly response.
+
+Run the Python RAG service first:
+
+```powershell
+uvicorn rag_service.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Then start the gateway:
+
+```powershell
+cd backend-spring
+mvn spring-boot:run
+```
+
+By default, the gateway listens on `http://127.0.0.1:8080` and calls the Python service at `http://127.0.0.1:8000`.
+Override the internal RAG URL with:
+
+```powershell
+$env:RAG_SERVICE_BASE_URL="http://127.0.0.1:8000"
+mvn spring-boot:run
+```
+
+Gateway endpoints:
+
+- `POST /api/auth/token`: development JWT token endpoint
+- `GET /api/documents`: list uploaded documents
+- `POST /api/documents/upload`: upload and index a document
+- `DELETE /api/documents/{documentId}`: delete document vectors and stored file
+- `POST /api/chat`: frontend chat request/response
+- `POST /api/chat/stream`: SSE stream proxy for chat UI
+- `GET /actuator/health`: gateway health
+
+Example:
+
+```powershell
+$token = (Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8080/api/auth/token `
+  -ContentType "application/json" `
+  -Body '{"username":"demo","password":"demo123"}').accessToken
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8080/api/chat `
+  -ContentType "application/json" `
+  -Headers @{ Authorization = "Bearer $token" } `
+  -Body '{"message":"How does RAG reduce hallucination?","topK":5,"filters":{"source":"book"}}'
+```
+
+Useful gateway environment variables:
+
+- `JWT_SECRET`: HS256 signing secret, at least 32 bytes
+- `JWT_DEMO_USERNAME`: local login username, default `demo`
+- `JWT_DEMO_PASSWORD`: local login password, default `demo123`
+- `JWT_TOKEN_TTL`: token lifetime, default `1h`
+- `RATE_LIMIT_CAPACITY`: request burst size, default `30`
+- `RATE_LIMIT_REFILL_TOKENS`: refill amount, default `30`
+- `RATE_LIMIT_REFILL_PERIOD`: refill interval, default `1m`
+
+Current gateway scope:
+
+- API gateway boundary
+- request validation
+- Python RAG service bridge
+- REST chat endpoint
+- SSE chat endpoint
+- JWT authentication
+- in-memory rate limiting
+- downstream timeout/error handling
+
+Next backend addition should be persistence for users/chat history.
+
+---
+
+## Next.js Chat UI
+
+The Next.js app is the frontend layer from the architecture diagram.
+It renders a black chat interface, streams answers through the Spring Boot gateway, and displays citations returned by the RAG pipeline.
+Sign in with the gateway credentials, defaulting to `demo` / `demo123` for local development.
+
+Start the Python RAG service first:
+
+```powershell
+python -m uvicorn rag_service.main:app --host 127.0.0.1 --port 8000
+```
+
+Start Spring Boot:
+
+```powershell
+cd backend-spring
+mvn spring-boot:run
+```
+
+Then start the frontend:
+
+```powershell
+cd frontend-next
+npm install
+npm run dev
+```
+
+Open:
+
+```text
+http://127.0.0.1:3000
+```
+
+By default, the Next.js route handlers proxy to Spring Boot at `http://127.0.0.1:8080`.
+Override it with:
+
+```powershell
+$env:SPRING_GATEWAY_URL="http://127.0.0.1:8080"
+npm run dev
+```
+
+Frontend routes:
+
+- `/`: chat UI
+- `/api/token`: server-side proxy to Spring `POST /api/auth/token`
+- `/api/documents`: server-side proxy to Spring `GET /api/documents`
+- `/api/documents/upload`: server-side proxy to Spring `POST /api/documents/upload`
+- `/api/documents/{documentId}`: server-side proxy to Spring `DELETE /api/documents/{documentId}`
+- `/api/chat`: server-side proxy to Spring `POST /api/chat`
+- `/api/chat/stream`: server-side proxy to Spring `POST /api/chat/stream`
+
+---
+
+## Tests
+
+Run the Python test suite with:
+
+```powershell
+pytest tests -q
+```
+
+Current coverage includes:
+
+- token-aware chunking and overlap behavior
+- retrieval fallback, filtering, and PII masking
+- grounded answer prompt formatting, citations, and abstain behavior
+- FastAPI health and unloaded-index error handling
+
+Run Spring gateway tests with:
+
+```powershell
+cd backend-spring
+mvn test
+```
+
+Run frontend checks with:
+
+```powershell
+cd frontend-next
+npm run typecheck
+npm run build
+```
 
 ---
 

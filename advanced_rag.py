@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import re
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -24,7 +25,8 @@ _WORD_RE = re.compile(r"[a-z0-9]+")
 @dataclass
 class RAGConfig:
     embedding_model_name: str = "sentence-transformers/all-mpnet-base-v2"
-    reranker_model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    reranker_model_name: str | None = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    model_local_files_only: bool = False
     device: str | None = None
     default_top_k: int = 5
     candidate_pool_multiplier: int = 5
@@ -50,8 +52,10 @@ class AdvancedRAGEngine:
     def __init__(self, config: RAGConfig | None = None) -> None:
         self.config = config or RAGConfig()
         self.device = self.config.device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.embedding_model = SentenceTransformer(self.config.embedding_model_name, device=self.device)
-        self.reranker = CrossEncoder(self.config.reranker_model_name, device=self.device)
+        self.embedding_model: SentenceTransformer | None = None
+        self.reranker: CrossEncoder | None = None
+        self._embedding_model_load_failed = False
+        self._reranker_load_failed = False
 
         self.chunks: list[ChunkRecord] = []
         self.embeddings: torch.Tensor | None = None
@@ -63,6 +67,27 @@ class AdvancedRAGEngine:
         self._retrieve_cache: dict[str, dict[str, Any]] = {}
         self._answer_cache: dict[str, dict[str, Any]] = {}
 
+    def _get_embedding_model(self) -> SentenceTransformer:
+        if self.embedding_model is not None:
+            return self.embedding_model
+        if self._embedding_model_load_failed:
+            raise RuntimeError("Embedding model failed to load earlier in this process.")
+
+        try:
+            self.embedding_model = SentenceTransformer(
+                self.config.embedding_model_name,
+                device=self.device,
+                local_files_only=self.config.model_local_files_only,
+            )
+        except Exception as exc:
+            self._embedding_model_load_failed = True
+            raise RuntimeError(
+                "Could not load the embedding model. Make sure the model is available locally "
+                "or network access to Hugging Face is configured."
+            ) from exc
+
+        return self.embedding_model
+
     @staticmethod
     def _tokenize_for_bm25(text: str) -> list[str]:
         return _WORD_RE.findall(text.lower())
@@ -70,7 +95,8 @@ class AdvancedRAGEngine:
     @staticmethod
     def _safe_float(value: Any, default: float = 0.0) -> float:
         try:
-            return float(value)
+            parsed = float(value)
+            return parsed if math.isfinite(parsed) else default
         except (TypeError, ValueError):
             return default
 
@@ -92,10 +118,34 @@ class AdvancedRAGEngine:
         if isinstance(value, str):
             stripped = value.strip()
             if stripped.startswith("[") and stripped.endswith("]"):
-                parsed = np.fromstring(stripped[1:-1], sep=" ")
-                if parsed.size > 0:
+                inner = stripped[1:-1].replace("\n", " ")
+                parsed = np.fromstring(inner.replace(",", " "), sep=" ")
+                if parsed.size > 0 and np.all(np.isfinite(parsed)):
                     return parsed.astype(np.float32)
         raise ValueError("Unsupported embedding format")
+
+    @staticmethod
+    def _clean_metadata_value(value: Any, default: Any = None) -> Any:
+        if value is None:
+            return default
+        try:
+            if pd.isna(value):
+                return default
+        except (TypeError, ValueError):
+            pass
+        return value
+
+    @staticmethod
+    def _normalize_embedding_matrix(vectors: list[np.ndarray]) -> np.ndarray:
+        matrix = np.asarray(vectors, dtype=np.float32)
+        if matrix.ndim != 2:
+            raise ValueError("Embeddings must form a 2D matrix.")
+
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+        if np.any(norms == 0):
+            raise ValueError("Embedding matrix contains a zero vector.")
+
+        return matrix / norms
 
     def rewrite_query(self, query: str) -> str:
         if not self.config.query_rewrite_enabled:
@@ -147,7 +197,9 @@ class AdvancedRAGEngine:
         built_chunks: list[ChunkRecord] = []
 
         def count_tokens(text: str) -> int:
-            token_ids = self.embedding_model.tokenizer(text, add_special_tokens=True, truncation=False)["input_ids"]
+            token_ids = self._get_embedding_model().tokenizer(text, add_special_tokens=True, truncation=False)[
+                "input_ids"
+            ]
             return len(token_ids)
 
         for doc_idx, doc in enumerate(docs):
@@ -193,7 +245,7 @@ class AdvancedRAGEngine:
             raise ValueError("Cannot build index with empty chunks.")
 
         texts = [chunk.text for chunk in chunks]
-        embeddings = self.embedding_model.encode(
+        embeddings = self._get_embedding_model().encode(
             texts,
             batch_size=batch_size,
             convert_to_numpy=True,
@@ -201,16 +253,24 @@ class AdvancedRAGEngine:
             normalize_embeddings=True,
         )
 
-        for idx, emb in enumerate(embeddings):
-            chunks[idx].embedding = np.asarray(emb, dtype=np.float32)
+        embedding_matrix = self._normalize_embedding_matrix([np.asarray(emb, dtype=np.float32) for emb in embeddings])
+        for idx, emb in enumerate(embedding_matrix):
+            chunks[idx].embedding = emb
 
         self.chunks = chunks
-        self.embeddings = torch.tensor(np.asarray(embeddings), dtype=torch.float32, device="cpu")
+        self.embeddings = torch.tensor(embedding_matrix, dtype=torch.float32, device="cpu")
         self._bm25_corpus_tokens = [self._tokenize_for_bm25(text) for text in texts]
         self._bm25 = BM25Okapi(self._bm25_corpus_tokens)
 
     def load_index_from_csv(self, csv_path: str | Path) -> None:
-        df = pd.read_csv(csv_path)
+        path = Path(csv_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Embedding index CSV not found: {path}")
+
+        df = pd.read_csv(path)
+        if df.empty:
+            raise ValueError("Embedding index CSV is empty.")
+
         required_cols = {"sentence_chunk", "embedding"}
         if not required_cols.issubset(df.columns):
             raise ValueError(f"CSV must contain columns: {sorted(required_cols)}")
@@ -219,21 +279,35 @@ class AdvancedRAGEngine:
         vectors: list[np.ndarray] = []
 
         for idx, row in df.iterrows():
-            emb = self._parse_embedding_value(row["embedding"])
-            text = str(row["sentence_chunk"])
+            try:
+                emb = self._parse_embedding_value(row["embedding"])
+            except ValueError as exc:
+                raise ValueError(f"Failed to parse embedding at CSV row {idx}.") from exc
+
+            text = str(row["sentence_chunk"]).strip()
+            if not text:
+                continue
+
             metadata = {
-                "page_number": row.get("page_number"),
-                "chunk_char_count": row.get("chunk_char_count"),
-                "chunk_word_count": row.get("chunk_word_count"),
-                "chunk_token_count": row.get("chunk_token_count"),
-                "source": row.get("source", "book"),
+                "page_number": self._clean_metadata_value(row.get("page_number")),
+                "chunk_char_count": self._clean_metadata_value(row.get("chunk_char_count")),
+                "chunk_word_count": self._clean_metadata_value(row.get("chunk_word_count")),
+                "chunk_token_count": self._clean_metadata_value(row.get("chunk_token_count")),
+                "source": self._clean_metadata_value(row.get("source"), default="book"),
             }
             chunk_id = str(row.get("chunk_id", f"chunk-{idx:06d}"))
             chunks.append(ChunkRecord(chunk_id=chunk_id, text=text, metadata=metadata, embedding=emb))
             vectors.append(emb)
 
+        if not chunks:
+            raise ValueError("Embedding index CSV did not contain any usable chunks.")
+
+        embedding_matrix = self._normalize_embedding_matrix(vectors)
+        for chunk, emb in zip(chunks, embedding_matrix):
+            chunk.embedding = emb
+
         self.chunks = chunks
-        self.embeddings = torch.tensor(np.asarray(vectors), dtype=torch.float32, device="cpu")
+        self.embeddings = torch.tensor(embedding_matrix, dtype=torch.float32, device="cpu")
         self._bm25_corpus_tokens = [self._tokenize_for_bm25(c.text) for c in chunks]
         self._bm25 = BM25Okapi(self._bm25_corpus_tokens)
 
@@ -268,7 +342,7 @@ class AdvancedRAGEngine:
         if self.embeddings is None:
             raise RuntimeError("Embeddings are not initialized.")
 
-        query_emb = self.embedding_model.encode(query, convert_to_tensor=True, normalize_embeddings=True)
+        query_emb = self._get_embedding_model().encode(query, convert_to_tensor=True, normalize_embeddings=True)
         query_emb = torch.as_tensor(query_emb, dtype=torch.float32).cpu()
         if query_emb.ndim == 1:
             query_emb = query_emb.unsqueeze(0)
@@ -307,12 +381,42 @@ class AdvancedRAGEngine:
 
         return fused
 
+    def _get_reranker(self) -> CrossEncoder | None:
+        if not self.config.reranker_model_name or self._reranker_load_failed:
+            return None
+        if self.reranker is not None:
+            return self.reranker
+
+        try:
+            self.reranker = CrossEncoder(
+                self.config.reranker_model_name,
+                device=self.device,
+                local_files_only=self.config.model_local_files_only,
+            )
+        except Exception as exc:  # pragma: no cover - model availability depends on local cache/network.
+            self._reranker_load_failed = True
+            warnings.warn(
+                f"Reranker model could not be loaded; falling back to fused dense/BM25 ranking. Reason: {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return None
+
+        return self.reranker
+
     def _rerank(self, query: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not candidates:
             return candidates
 
+        reranker = self._get_reranker()
+        if reranker is None:
+            for candidate in candidates:
+                candidate["rerank_score"] = candidate["fusion_score"]
+            candidates.sort(key=lambda x: x["fusion_score"], reverse=True)
+            return candidates
+
         pairs = [[query, item["text"]] for item in candidates]
-        rerank_scores = self.reranker.predict(pairs)
+        rerank_scores = reranker.predict(pairs)
 
         for i, score in enumerate(rerank_scores):
             candidates[i]["rerank_score"] = float(score)
@@ -332,6 +436,9 @@ class AdvancedRAGEngine:
 
         rewritten_query = self.rewrite_query(query)
         chosen_top_k = top_k or self.adaptive_top_k(query)
+        if chosen_top_k <= 0:
+            raise ValueError("top_k must be greater than zero.")
+
         pool_size = min(len(self.chunks), max(chosen_top_k * self.config.candidate_pool_multiplier, 20))
 
         cache_key = self._hash_dict(
@@ -340,7 +447,15 @@ class AdvancedRAGEngine:
         if use_cache and cache_key in self._retrieve_cache:
             return self._retrieve_cache[cache_key]
 
-        dense_ranked = self._dense_search(rewritten_query, pool_size=pool_size)
+        try:
+            dense_ranked = self._dense_search(rewritten_query, pool_size=pool_size)
+        except RuntimeError as exc:
+            warnings.warn(
+                f"Dense search is unavailable; falling back to BM25-only retrieval. Reason: {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            dense_ranked = []
         bm25_ranked = self._bm25_search(rewritten_query, pool_size=pool_size)
         fused = self._rrf_fusion(dense_ranked, bm25_ranked)
 

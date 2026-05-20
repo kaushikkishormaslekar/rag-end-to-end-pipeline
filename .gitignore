@@ -17,10 +17,24 @@ ENV/
 *.pdf
 *.csv
 text_chunks_and_embeddings_df.csv
+reports/
+reports_*/
 
 # Model cache
 .cache/
 models/
+chroma_db/
+documents/
+
+# Java / Spring
+backend-spring/target/
+
+# Node / Next.js
+frontend-next/.next/
+frontend-next/node_modules/
+frontend-next/out/
+frontend-next/*.log
+frontend-next/*.tsbuildinfo
 
 # OS
 .DS_Store

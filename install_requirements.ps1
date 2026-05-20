@@ -1,45 +1,49 @@
-# Install all required packages for RAG model with GPU support
-# Run this after PyTorch installation is complete
+param(
+    [string]$VenvPath = ".\venv_py312",
+    [string]$CudaIndexUrl = "https://download.pytorch.org/whl/cu121",
+    [switch]$SkipTorch,
+    [switch]$InstallBitsAndBytes
+)
 
-Write-Host "Installing Python packages for RAG model..." -ForegroundColor Green
+$ErrorActionPreference = "Stop"
 
-# Activate virtual environment
-$venvPath = ".\venv_py312\Scripts\python.exe"
+$pythonPath = Join-Path $VenvPath "Scripts\python.exe"
 
-# Install core packages
-& $venvPath -m pip install --upgrade pip
+if (-not (Test-Path $pythonPath)) {
+    Write-Host "Creating virtual environment at $VenvPath" -ForegroundColor Green
+    $createdWithPy312 = $false
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        py -3.12 -m venv $VenvPath
+        $createdWithPy312 = ($LASTEXITCODE -eq 0)
+    }
+    if (-not $createdWithPy312) {
+        Write-Warning "Python 3.12 was not found by the py launcher. Falling back to the default python on PATH."
+        python -m venv $VenvPath
+    }
+}
 
-# Install ML/AI packages
-& $venvPath -m pip install sentence-transformers
-& $venvPath -m pip install transformers
-& $venvPath -m pip install accelerate
-& $venvPath -m pip install bitsandbytes
+& $pythonPath --version | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "The virtual environment at $VenvPath exists but its Python executable is not usable. Remove that folder and rerun this script."
+}
 
-# Install data processing packages
-& $venvPath -m pip install pandas
-& $venvPath -m pip install numpy
-& $venvPath -m pip install scipy
+Write-Host "Installing RAG pipeline dependencies..." -ForegroundColor Green
 
-# Install NLP packages
-& $venvPath -m pip install nltk
-& $venvPath -m pip install tqdm
+& $pythonPath -m pip install --upgrade pip
 
-# Install PDF processing
-& $venvPath -m pip install pymupdf
+if (-not $SkipTorch) {
+    Write-Host "Installing PyTorch from $CudaIndexUrl" -ForegroundColor Green
+    & $pythonPath -m pip install torch torchvision torchaudio --index-url $CudaIndexUrl
+}
 
-# Install Jupyter and related
-& $venvPath -m pip install jupyter
-& $venvPath -m pip install ipykernel
-& $venvPath -m pip install ipywidgets
+& $pythonPath -m pip install -r requirements.txt
 
-# Install Hugging Face
-& $venvPath -m pip install huggingface-hub
+if ($InstallBitsAndBytes) {
+    Write-Host "Installing optional bitsandbytes package..." -ForegroundColor Yellow
+    & $pythonPath -m pip install bitsandbytes
+}
 
-# Register the kernel with Jupyter
-& $venvPath -m ipykernel install --user --name=rag_py312 --display-name="Python 3.12 (RAG GPU)"
+& $pythonPath -m ipykernel install --user --name=rag_py312 --display-name="Python 3.12 (RAG GPU)"
 
-Write-Host "`n✅ All packages installed successfully!" -ForegroundColor Green
-Write-Host "🚀 You can now use the 'Python 3.12 (RAG GPU)' kernel in your notebook" -ForegroundColor Cyan
-
-
-#FET3BlbkFJdBV_7qSAOL3Ao6BbR5ORtprcRZVgJecsWrCA5eY_KTMg_DuGqMK8Wn7bs1QB09CMlgmzNOM10A
+Write-Host "`nAll packages installed successfully." -ForegroundColor Green
+Write-Host "You can now use the 'Python 3.12 (RAG GPU)' kernel in Jupyter." -ForegroundColor Cyan
